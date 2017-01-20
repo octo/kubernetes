@@ -278,6 +278,7 @@ func NewKubectlCommand(f cmdutil.Factory, in io.Reader, out, err io.Writer) *cob
 		{
 			Message: "Troubleshooting and Debugging Commands:",
 			Commands: []*cobra.Command{
+				NewCmdDebug(f, in, out, err),
 				NewCmdDescribe(f, out, err),
 				NewCmdLogs(f, out),
 				NewCmdAttach(f, in, out, err),

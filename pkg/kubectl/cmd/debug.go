@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"io"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
@@ -34,46 +36,100 @@ var (
 	`)
 
 	debugExample = templates.Examples(`
-		# Container "shell" does not exist, add a new container to running pod
-		kubectl debug -p example -c shell --image=debian
-
-		# Container DNE, create a copy with an additional container
-		kubectl debug -p example-copy --copy-of example -c shell --image=debian
+		# Container does not exist, create a copy with an additional container
+		# kubectl debug -p example-copy --copy-of example -c shell --image=debian
+		kubectl debug example --copy --container new-container --image=debian
 
 		# Container name exists, create a copy with a different entrypoint
-		kubectl debug -p example-copy --copy-of example -c example --command -- /bin/sh`)
+		# kubectl debug -p example-copy --copy-of example -c example --command -- /bin/sh
+		kubectl debug example --copy --container existing-container --command -- /bin/sh
+
+		# Container "shell" does not exist, add a new container to running pod
+		# TODO(octo): not yet supported
+		kubectl debug -p example -c shell --image=debian`)
 )
 
 func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "debug [-p POD] --copy-of POD -c CONTAINER",
+		Use:     "debug POD --copy [-c CONTAINER] (--image|--command)",
 		Short:   "Debug a pod by copying and modifying it",
 		Long:    debugLong,
 		Example: debugExample,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := debugRun(f, in, out, errOut, cmd, args)
+			l := cmd.ArgsLenAtDash()
+			err := debugRun(f, in, out, errOut, cmd, args[:l], args[l:])
 			cmdutil.CheckErr(err)
 		},
 	}
 
 	flags := cmd.Flags()
-	flags.StringP("pod", "p", "", "Name of the pod to spawn.")
-	flags.StringP("container", "c", "", "Name of the container to run.")
-	flags.String("copy-of", "", "Name of the pod to base the debug pod on.")
-	// TODO(octo): --command, --image, -t, -i
+
+	// copied from run.go
+	flags.Bool("command", false, "If true and extra arguments are present, use them as the 'command' field in the container, rather than the 'args' field which is the default.")
+
+	// copied from exec.go
+	flags.StringP("container", "c", "", "Container name. If omitted, the first container in the pod will be chosen")
+	flags.BoolP("stdin", "i", false, "Pass stdin to the container")
+	flags.BoolP("tty", "t", false, "Stdin is a TTY")
+
+	// TODO(octo): sed(1) uses --in-place
+	flags.Bool("copy", true, "Whether to copy the pod (true) or modify it in place (false).")
 
 	return cmd
 }
 
-func debugRun(f cmdutil.Factory, in io.Reader, out, errOut io.Writer, cmd *cobra.Command, args []string) error {
-	dstPod := cmdutil.GetFlagString(cmd, "pod")
-	srcPod := cmdutil.GetFlagString(cmd, "copy-of")
-	container := cmdutil.GetFlagString(cmd, "container")
+func debugRun(f cmdutil.Factory, in io.Reader, out, errOut io.Writer, cmd *cobra.Command, args, extraArgs []string) error {
+	if len(args) < 1 {
+		return cmdutil.UsageError(cmd, "name of pod to debug is required")
+	}
+	srcPodName, args := args[0], args[1:]
+	fmt.Printf("srcPodName = %q\n", srcPodName)
 
-	if dstPod == "" || srcPod == "" || container == "" {
-		return cmdutil.UsageError(cmd, "-p/--pod, -c/--container and --copy-of are required to run")
+	if len(extraArgs) != 0 {
+		args = append(args, extraArgs...)
+	}
+	fmt.Printf("args = %+v\n", args)
+
+	srcPod, err := loadPod(f, srcPodName)
+	if err != nil {
+		return err
 	}
 
-	fmt.Printf("dstPod = %q, srcPod = %q, container = %q\n", dstPod, srcPod, container)
+	container := containerName(cmd, &srcPod.Spec)
+	fmt.Printf("container = %q\n", container)
+
 	return nil
+}
+
+// loadPod retrieves information about a pod from the server and returns it.
+func loadPod(f cmdutil.Factory, name string) (*api.Pod, error) {
+	cs, err := f.ClientSet()
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(octo): allow to specify a namespace.
+	ns, _, err := f.DefaultNamespace()
+	if err != nil {
+		return nil, err
+	}
+	podClient := cs.Core().Pods(ns)
+
+	srcPod, err := podClient.Get(name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve spec for pod %q: %v", name, err)
+	}
+
+	fmt.Printf("srcPod.Spec = %#v\n", &srcPod.Spec)
+	return srcPod, nil
+}
+
+// containerName returns the value of the "container" flag if specified or the
+// name of the first container in the pod otherwise.
+func containerName(cmd *cobra.Command, podSpec *api.PodSpec) string {
+	if c := cmdutil.GetFlagString(cmd, "container"); c != "" {
+		return c
+	}
+
+	return podSpec.Containers[0].Name
 }

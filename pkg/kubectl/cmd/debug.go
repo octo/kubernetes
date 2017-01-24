@@ -37,21 +37,19 @@ var (
 
 	debugExample = templates.Examples(`
 		# Container does not exist, create a copy with an additional container
-		# kubectl debug -p example-copy --copy-of example -c shell --image=debian
-		kubectl debug example --copy --container new-container --image=debian
+		kubectl debug example [-p NAME] [--container new-container] --image=debian
 
 		# Container name exists, create a copy with a different entrypoint
-		# kubectl debug -p example-copy --copy-of example -c example --command -- /bin/sh
-		kubectl debug example --copy --container existing-container --command -- /bin/sh
+		kubectl debug example [-p NAME] [--container existing-container] --command -- /bin/sh
 
 		# Container "shell" does not exist, add a new container to running pod
 		# TODO(octo): not yet supported
-		kubectl debug -p example -c shell --image=debian`)
+		kubectl debug example --in-place -c shell --image=debian`)
 )
 
 func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "debug POD --copy [-c CONTAINER] (--image|--command)",
+		Use:     "debug POD [--in-place] [-c CONTAINER] (--image|--command)",
 		Short:   "Debug a pod by copying and modifying it",
 		Long:    debugLong,
 		Example: debugExample,
@@ -66,14 +64,14 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 
 	// copied from run.go
 	flags.Bool("command", false, "If true and extra arguments are present, use them as the 'command' field in the container, rather than the 'args' field which is the default.")
+	flags.String("image", "", "The image for the container to run.")
 
 	// copied from exec.go
 	flags.StringP("container", "c", "", "Container name. If omitted, the first container in the pod will be chosen")
 	flags.BoolP("stdin", "i", false, "Pass stdin to the container")
 	flags.BoolP("tty", "t", false, "Stdin is a TTY")
 
-	// TODO(octo): sed(1) uses --in-place
-	flags.Bool("copy", true, "Whether to copy the pod (true) or modify it in place (false).")
+	flags.Bool("in-place", false, "When enabled, the pod to debug is modifyed rather a modifyed copy being created")
 
 	return cmd
 }

@@ -76,58 +76,146 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 	return cmd
 }
 
-func debugRun(f cmdutil.Factory, in io.Reader, out, errOut io.Writer, cmd *cobra.Command, args, extraArgs []string) error {
-	if len(args) < 1 {
-		return cmdutil.UsageError(cmd, "name of pod to debug is required")
-	}
-	srcPodName, args := args[0], args[1:]
-	fmt.Printf("srcPodName = %q\n", srcPodName)
-
-	if len(extraArgs) != 0 {
-		args = append(args, extraArgs...)
-	}
-	fmt.Printf("args = %+v\n", args)
-
-	srcPod, err := loadPod(f, srcPodName)
+func debugRun(f cmdutil.Factory, in io.Reader, out, errOut io.Writer, cobraCmd *cobra.Command, args, extraArgs []string) error {
+	cmd, err := newDebugCmd(f, cobraCmd, args, extraArgs)
 	if err != nil {
 		return err
 	}
 
-	container := containerName(cmd, &srcPod.Spec)
-	fmt.Printf("container = %q\n", container)
+	return cmd.Run()
+}
+
+// debugCmd holds flags and context for executing the "debug" command.
+type debugCmd struct {
+	// Flags
+	SrcPod     string
+	DstPod     string
+	Container  string
+	Image      string
+	EntryPoint []string
+	Args       []string
+	Stdin      bool
+	TTY        bool
+
+	Command *cobra.Command
+	Factory cmdutil.Factory
+}
+
+// newDebugCmd initializes and returns a debugCmd.
+func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string) (*debugCmd, error) {
+	if len(args) < 1 {
+		return nil, cmdutil.UsageError(cmd, "name of pod to debug is required")
+	}
+
+	return &debugCmd{
+		SrcPod:     args[0],
+		DstPod:     cmdutil.GetFlagString(cmd, "pod"),
+		Container:  cmdutil.GetFlagString(cmd, "container"),
+		Image:      cmdutil.GetFlagString(cmd, "image"),
+		EntryPoint: args[1:],
+		Args:       extraArgs,
+		Stdin:      cmdutil.GetFlagBool(cmd, "stdin"),
+		TTY:        cmdutil.GetFlagBool(cmd, "tty"),
+
+		Command: cmd,
+		Factory: f,
+	}, nil
+}
+
+// Run executes the "debug" command.
+func (cmd *debugCmd) Run() error {
+	src, err := cmd.pod(cmd.SrcPod)
+	if err != nil {
+		return err
+	}
+
+	if cmd.Container == "" {
+		cmd.Container = src.Spec.Containers[0].Name
+	}
+
+	spec, err := cmd.modifiedSpec(src.Spec)
+	if err != nil {
+		return err
+	}
+
+	// TODO(octo): start new pod
+	_ = spec
 
 	return nil
 }
 
-// loadPod retrieves information about a pod from the server and returns it.
-func loadPod(f cmdutil.Factory, name string) (*api.Pod, error) {
-	cs, err := f.ClientSet()
+func (cmd *debugCmd) pod(name string) (*api.Pod, error) {
+	cs, err := cmd.Factory.ClientSet()
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO(octo): allow to specify a namespace.
-	ns, _, err := f.DefaultNamespace()
+	ns, _, err := cmd.Factory.DefaultNamespace()
 	if err != nil {
 		return nil, err
 	}
 	podClient := cs.Core().Pods(ns)
 
-	srcPod, err := podClient.Get(name, metav1.GetOptions{})
+	pod, err := podClient.Get(name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve spec for pod %q: %v", name, err)
 	}
 
-	fmt.Printf("srcPod.Spec = %#v\n", &srcPod.Spec)
-	return srcPod, nil
+	return pod, nil
 }
 
-// containerName returns the value of the "container" flag if specified or the
-// name of the first container in the pod otherwise.
-func containerName(cmd *cobra.Command, podSpec *api.PodSpec) string {
-	if c := cmdutil.GetFlagString(cmd, "container"); c != "" {
-		return c
+func (cmd *debugCmd) modifiedSpec(spec api.PodSpec) (*api.PodSpec, error) {
+	c, ok := cmd.container(&spec)
+	if ok {
+		c = cmd.modifiedContainer(c)
+	} else {
+		spec.Containers = append(spec.Containers, cmd.newContainer())
+		c = &spec.Containers[len(spec.Containers)-1]
 	}
 
-	return podSpec.Containers[0].Name
+	return &spec, nil
+}
+
+// newContainer returns a new container specification according to the debug
+// command's flags and arguments.
+func (cmd *debugCmd) newContainer() api.Container {
+	return api.Container{
+		Name:    cmd.Container,
+		Image:   cmd.Image,
+		Command: cmd.EntryPoint,
+		Args:    cmd.Args,
+
+		Stdin: cmd.Stdin,
+		TTY:   cmd.TTY,
+	}
+}
+
+// container returns a pointer to the named container, or to the first
+// container if name is the empty string, and true. If no container by that
+// name exists, (nil, false) is returned.
+func (cmd *debugCmd) container(spec *api.PodSpec) (*api.Container, bool) {
+	for _, c := range spec.Containers {
+		if c.Name == cmd.Container {
+			return &c, true
+		}
+	}
+
+	return nil, false
+}
+
+func (cmd *debugCmd) modifiedContainer(c *api.Container) *api.Container {
+	if cmd.Image != "" {
+		c.Image = cmd.Image
+	}
+	if len(cmd.EntryPoint) != 0 {
+		c.Command = cmd.EntryPoint
+	}
+	if len(cmd.Args) != 0 {
+		c.Args = cmd.Args
+	}
+	c.Stdin = cmd.Stdin
+	c.TTY = cmd.TTY
+
+	return c
 }

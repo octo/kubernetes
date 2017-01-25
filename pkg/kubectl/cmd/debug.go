@@ -22,6 +22,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/kubernetes/pkg/api"
+	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
@@ -53,10 +54,15 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 		Short:   "Debug a pod by copying and modifying it",
 		Long:    debugLong,
 		Example: debugExample,
-		Run: func(cmd *cobra.Command, args []string) {
-			l := cmd.ArgsLenAtDash()
-			err := debugRun(f, in, out, errOut, cmd, args[:l], args[l:])
+		Run: func(cobraCmd *cobra.Command, args []string) {
+			var extraArgs []string
+			if l := cobraCmd.ArgsLenAtDash(); l != -1 {
+				args, extraArgs = args[:l], args[l:]
+			}
+			dbg, err := newDebugCmd(f, cobraCmd, args, extraArgs)
 			cmdutil.CheckErr(err)
+
+			cmdutil.CheckErr(dbg.Run())
 		},
 	}
 
@@ -74,15 +80,6 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 	flags.Bool("in-place", false, "When enabled, the pod to debug is modifyed rather a modifyed copy being created")
 
 	return cmd
-}
-
-func debugRun(f cmdutil.Factory, in io.Reader, out, errOut io.Writer, cobraCmd *cobra.Command, args, extraArgs []string) error {
-	cmd, err := newDebugCmd(f, cobraCmd, args, extraArgs)
-	if err != nil {
-		return err
-	}
-
-	return cmd.Run()
 }
 
 // debugCmd holds flags and context for executing the "debug" command.
@@ -138,13 +135,13 @@ func (cmd *debugCmd) Run() error {
 		return err
 	}
 
-	// TODO(octo): start new pod
-	_ = spec
-
-	return nil
+	// TODO(octo): is there more to do?
+	return cmd.createPod(&api.Pod{
+		Spec: *spec,
+	})
 }
 
-func (cmd *debugCmd) pod(name string) (*api.Pod, error) {
+func (cmd *debugCmd) podClient() (coreclient.PodInterface, error) {
 	cs, err := cmd.Factory.ClientSet()
 	if err != nil {
 		return nil, err
@@ -155,14 +152,32 @@ func (cmd *debugCmd) pod(name string) (*api.Pod, error) {
 	if err != nil {
 		return nil, err
 	}
-	podClient := cs.Core().Pods(ns)
 
-	pod, err := podClient.Get(name, metav1.GetOptions{})
+	return cs.Core().Pods(ns), nil
+}
+
+func (cmd *debugCmd) pod(name string) (*api.Pod, error) {
+	client, err := cmd.podClient()
+	if err != nil {
+		return nil, err
+	}
+
+	pod, err := client.Get(name, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve spec for pod %q: %v", name, err)
 	}
 
 	return pod, nil
+}
+
+func (cmd *debugCmd) createPod(pod *api.Pod) error {
+	client, err := cmd.podClient()
+	if err != nil {
+		return err
+	}
+
+	_, err = client.Create(pod)
+	return err
 }
 
 func (cmd *debugCmd) modifiedSpec(spec api.PodSpec) (*api.PodSpec, error) {

@@ -73,6 +73,7 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 	flags.String("image", "", "The image for the container to run.")
 
 	// copied from exec.go
+	flags.StringP("pod", "p", "", "Pod name")
 	flags.StringP("container", "c", "", "Container name. If omitted, the first container in the pod will be chosen")
 	flags.BoolP("stdin", "i", false, "Pass stdin to the container")
 	flags.BoolP("tty", "t", false, "Stdin is a TTY")
@@ -126,6 +127,10 @@ func (cmd *debugCmd) Run() error {
 		return err
 	}
 
+	if cmd.DstPod == "" {
+		cmd.DstPod = cmd.SrcPod + "-debug"
+	}
+
 	if cmd.Container == "" {
 		cmd.Container = src.Spec.Containers[0].Name
 	}
@@ -137,6 +142,9 @@ func (cmd *debugCmd) Run() error {
 
 	// TODO(octo): is there more to do?
 	return cmd.createPod(&api.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: cmd.DstPod,
+		},
 		Spec: *spec,
 	})
 }

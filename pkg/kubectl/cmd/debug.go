@@ -50,7 +50,7 @@ var (
 
 func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "debug POD [--in-place] [-c CONTAINER] (--image|--command)",
+		Use:     "debug POD [-c CONTAINER] (--image|--command)",
 		Short:   "Debug a pod by copying and modifying it",
 		Long:    debugLong,
 		Example: debugExample,
@@ -77,7 +77,7 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 	flags.BoolP("stdin", "i", false, "Pass stdin to the container")
 	flags.BoolP("tty", "t", false, "Stdin is a TTY")
 
-	flags.Bool("in-place", false, "When enabled, the pod to debug is modifyed rather a modifyed copy being created")
+	// flags.Bool("in-place", false, "When enabled, the pod to debug is modifyed rather a modifyed copy being created")
 
 	return cmd
 }

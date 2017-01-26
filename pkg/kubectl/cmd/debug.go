@@ -222,9 +222,9 @@ func (cmd *debugCmd) newContainer() api.Container {
 // container if name is the empty string, and true. If no container by that
 // name exists, (nil, false) is returned.
 func (cmd *debugCmd) container(spec *api.PodSpec) (*api.Container, bool) {
-	for _, c := range spec.Containers {
-		if c.Name == cmd.Container {
-			return &c, true
+	for i := range spec.Containers {
+		if spec.Containers[i].Name == cmd.Container {
+			return &spec.Containers[i], true
 		}
 	}
 

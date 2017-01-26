@@ -49,6 +49,11 @@ var (
 )
 
 func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.Command {
+	sOpt := StreamOptions{
+		In:  in,
+		Out: out,
+		Err: errOut,
+	}
 	cmd := &cobra.Command{
 		Use:     "debug POD [-c CONTAINER] (--image|--command)",
 		Short:   "Debug a pod by copying and modifying it",
@@ -59,7 +64,7 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 			if l := cobraCmd.ArgsLenAtDash(); l != -1 {
 				args, extraArgs = args[:l], args[l:]
 			}
-			dbg, err := newDebugCmd(f, cobraCmd, args, extraArgs)
+			dbg, err := newDebugCmd(f, cobraCmd, args, extraArgs, sOpt)
 			cmdutil.CheckErr(err)
 
 			cmdutil.CheckErr(dbg.Run())
@@ -92,18 +97,20 @@ type debugCmd struct {
 	Image      string
 	EntryPoint []string
 	Args       []string
-	Stdin      bool
-	TTY        bool
 
-	Command *cobra.Command
-	Factory cmdutil.Factory
+	*cobra.Command
+	cmdutil.Factory
+	StreamOptions
 }
 
 // newDebugCmd initializes and returns a debugCmd.
-func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string) (*debugCmd, error) {
+func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string, sOpt StreamOptions) (*debugCmd, error) {
 	if len(args) < 1 {
 		return nil, cmdutil.UsageError(cmd, "name of pod to debug is required")
 	}
+
+	sOpt.Stdin = cmdutil.GetFlagBool(cmd, "stdin")
+	sOpt.TTY = cmdutil.GetFlagBool(cmd, "tty")
 
 	return &debugCmd{
 		SrcPod:     args[0],
@@ -112,11 +119,10 @@ func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string
 		Image:      cmdutil.GetFlagString(cmd, "image"),
 		EntryPoint: args[1:],
 		Args:       extraArgs,
-		Stdin:      cmdutil.GetFlagBool(cmd, "stdin"),
-		TTY:        cmdutil.GetFlagBool(cmd, "tty"),
 
-		Command: cmd,
-		Factory: f,
+		Command:       cmd,
+		Factory:       f,
+		StreamOptions: sOpt,
 	}, nil
 }
 

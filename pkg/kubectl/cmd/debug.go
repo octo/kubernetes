@@ -74,6 +74,7 @@ func NewCmdDebug(f cmdutil.Factory, in io.Reader, out, errOut io.Writer) *cobra.
 	flags := cmd.Flags()
 
 	// copied from run.go
+	flags.Bool("attach", false, "If true, wait for the Pod to start running, and then attach to the Pod as if 'kubectl attach ...' were called.  Default false, unless '-i/--stdin' is set, in which case the default is true. With '--restart=Never' the exit code of the container process is returned.")
 	flags.Bool("command", false, "If true and extra arguments are present, use them as the 'command' field in the container, rather than the 'args' field which is the default.")
 	flags.String("image", "", "The image for the container to run.")
 
@@ -97,6 +98,7 @@ type debugCmd struct {
 	Image      string
 	EntryPoint []string
 	Args       []string
+	Attach     bool
 
 	*cobra.Command
 	cmdutil.Factory
@@ -112,6 +114,11 @@ func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string
 	sOpt.Stdin = cmdutil.GetFlagBool(cmd, "stdin")
 	sOpt.TTY = cmdutil.GetFlagBool(cmd, "tty")
 
+	attach := sOpt.Stdin // sic
+	if cmd.Flags().Lookup("attach").Changed {
+		attach = cmdutil.GetFlagBool(cmd, "attach")
+	}
+
 	return &debugCmd{
 		SrcPod:     args[0],
 		DstPod:     cmdutil.GetFlagString(cmd, "pod"),
@@ -119,6 +126,7 @@ func newDebugCmd(f cmdutil.Factory, cmd *cobra.Command, args, extraArgs []string
 		Image:      cmdutil.GetFlagString(cmd, "image"),
 		EntryPoint: args[1:],
 		Args:       extraArgs,
+		Attach:     attach,
 
 		Command:       cmd,
 		Factory:       f,
@@ -146,13 +154,19 @@ func (cmd *debugCmd) Run() error {
 		return err
 	}
 
-	// TODO(octo): is there more to do?
-	return cmd.createPod(&api.Pod{
+	pod := &api.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: cmd.DstPod,
+			Namespace: src.ObjectMeta.Namespace,
+			Name:      cmd.DstPod,
 		},
 		Spec: *spec,
-	})
+	}
+
+	if err := cmd.createPod(pod); err != nil {
+		return err
+	}
+
+	return cmd.attachPod(pod)
 }
 
 func (cmd *debugCmd) podClient() (coreclient.PodInterface, error) {
@@ -251,4 +265,42 @@ func (cmd *debugCmd) modifiedContainer(c *api.Container) *api.Container {
 	c.TTY = cmd.TTY
 
 	return c
+}
+
+func (cmd *debugCmd) attachPod(pod *api.Pod) error {
+	if !cmd.Attach {
+		return nil
+	}
+
+	config, err := cmd.Factory.ClientConfig()
+	if err != nil {
+		return err
+	}
+
+	cs, err := cmd.Factory.ClientSet()
+	if err != nil {
+		return err
+	}
+
+	opts := &AttachOptions{
+		StreamOptions: cmd.StreamOptions,
+
+		// TODO(octo): Run uses "attach"; why?!
+		CommandName: cmd.Command.Parent().CommandPath() + " attach",
+
+		Pod: pod,
+
+		Attach:    &DefaultRemoteAttach{},
+		PodClient: cs.Core(),
+		Config:    config,
+	}
+	opts.StreamOptions.ContainerName = cmd.Container
+
+	// handleAttachPod is declared in run.go
+	if err := handleAttachPod(cmd.Factory, opts.PodClient, pod.Namespace, pod.Name, opts, opts.StreamOptions.Quiet); err != nil {
+		return err
+	}
+
+	// TODO(octo):
+	return nil
 }

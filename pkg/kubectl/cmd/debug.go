@@ -184,8 +184,12 @@ func (cmd *debugCmd) createPod(pod *api.Pod) error {
 		return err
 	}
 
-	_, err = client.Create(pod)
-	return err
+	if _, err := client.Create(pod); err != nil {
+		return fmt.Errorf("client.Create(%q) = %v", pod.ObjectMeta.Name, err)
+	}
+
+	fmt.Printf("pod %q created", pod.ObjectMeta.Name)
+	return nil
 }
 
 func (cmd *debugCmd) modifiedSpec(spec api.PodSpec) (*api.PodSpec, error) {

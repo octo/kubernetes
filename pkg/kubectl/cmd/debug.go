@@ -208,7 +208,7 @@ func (cmd *debugCmd) createPod(pod *api.Pod) error {
 		return fmt.Errorf("client.Create(%q) = %v", pod.ObjectMeta.Name, err)
 	}
 
-	fmt.Printf("pod %q created", pod.ObjectMeta.Name)
+	fmt.Printf("pod %q created\n", pod.ObjectMeta.Name)
 	return nil
 }
 
